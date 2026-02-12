@@ -1,0 +1,58 @@
+graph TD
+    subgraph 用户与App
+        User[用户]
+        App[云智能APP]
+    end
+
+    subgraph 云端
+        CloudPlatform[阿里云物联网平台]
+        RDS[云数据库 RDS]
+    end
+    
+    subgraph 桌宠设备
+        
+        subgraph 硬件层
+            Mic[INMP441 麦克风]
+            Ultrasonic[超声波模块]
+            OLED[OLED 屏幕]
+            Motors[电机 x5]
+            LED[LED 灯]
+            Speaker[喇叭]
+        end
+
+        subgraph 软件/固件层
+            Firmware{主控固件程序}
+            ASR[自训练语音识别模型]
+            Logic[情绪与行为决策逻辑]
+            MQTT[MQTT客户端]
+            Drivers[外设驱动程序]
+        end
+
+    end
+
+    %% 数据流和控制流
+    User -- 语音 --> Mic
+    User -- 操作 --> App
+
+    App <-.->|双向数据| CloudPlatform
+    CloudPlatform <-.->|读写| RDS
+    CloudPlatform -.->|控制指令| MQTT
+    MQTT -.->|设备状态| CloudPlatform
+
+    Mic -- 音频流 --> Firmware
+    Firmware -- 传递音频数据 --> ASR
+    ASR -- 识别结果 --> Logic
+    
+    Ultrasonic -- 距离数据 --> Drivers
+    Drivers -- 处理后数据 --> Logic
+
+    Firmware -- 包含和调用 --> Logic
+    Firmware -- 包含和调用 --> MQTT
+    Firmware -- 包含和调用 --> Drivers
+
+    Logic -- 决策指令 --> Drivers
+    
+    Drivers -- 控制信号 --> OLED
+    Drivers -- 控制信号 --> Motors
+    Drivers -- 控制信号 --> LED
+    Drivers -- 控制信号 --> Speaker

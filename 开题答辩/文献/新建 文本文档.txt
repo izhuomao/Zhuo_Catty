@@ -1,0 +1,29 @@
+石娟,卫小将. 空巢青年养宠物行为的社会建构逻辑[J].中国青年研究,2023,(09):87-94.
+
+刘心怡. “舒适社交”：城市“空巢青年”新型社交模式探析[J].中国青年研究,2025,(06):74-82.
+
+Yokoi A. Simulation device for fostering a virtual creature: U.S. Patent 6227966[P]. 2001-5-8.
+
+Fujita M. AIBO: Toward the era of digital creatures[J]. The International Journal of Robotics Research, 2001, 20(10): 781-794.
+
+Guizzo E. By leaps and bounds: An exclusive look at how boston dynamics is redefining robot agility[J]. IEEE Spectrum, 2019, 56(12): 34-39.
+
+Seok S, Wang A, Chuah M Y, et al. Design principles for energy-efficient legged locomotion and implementation on the MIT cheetah robot[J]. Ieee/asme transactions on mechatronics, 2014, 20(3): 1117-1129.
+
+Hutter M, Gehring C, Lauber A, et al. Anymal-toward legged robots for harsh environments[J]. Advanced Robotics, 2017, 31(17): 918-931.
+
+Xu R W, Hsieh K C, Chan U H, et al. Analytical review on developing progress of the quadruped robot industry and gaits research[C]//2022 8th International Conference on Automation, Robotics and Applications (ICARA). IEEE, 2022: 1-8.
+
+Zhao X, Fei F. The development status and trend of commercial bionic robots[C]//Proceedings of the 2021 5th International Conference on Electronic Information Technology and Computer Engineering. 2021: 1377-1381.
+
+詹书豪,陈平平,彭川.基于ESP32的四足机器人的设计与实现[J].电子制作,2023,31(05):16-20+43.
+
+解丽岩.基于嵌入式平台的实时语音唤醒与音乐播放系统的设计与实现[J].仪器仪表用户,2025,32(10):52-54.
+
+燕越,刘忠超,刘尚争,等.基于ESP32与STM32的无线智能监控小车设计[J].中国仪器仪表,2023,(11):42-47.
+
+王浩.基于ESP32平台和MQTT协议的远程控制系统设计[J].软件工程,2020,23(08):38-41.
+
+苏自清,李国欣.ESP32上TinyML语音识别应用软硬件协同设计[J].物联网技术,2023,13(05):47-51.
+
+Li D, Lin J, Hou S, et al. Design and Implementation of a Multifunctional Desktop Pet Robot Dog Based on Arduino Nano and ESP32-S3[C]//International Conference on Intelligent Robotics and Applications. Singapore: Springer Nature Singapore, 2025: 509-520.
