@@ -12,15 +12,19 @@
 // 其他引脚保持不变...
 #define PIN_I2C_SDA     21
 #define PIN_I2C_SCL     22
+// 扬声器
 #define PIN_I2S_BCLK    25
 #define PIN_I2S_LRC     26
 #define PIN_I2S_DIN     33
+// 麦克风
 #define PIN_I2S_MIC_SCK 14
 #define PIN_I2S_MIC_WS  15
 #define PIN_I2S_MIC_SD  32
+
 #define PIN_RGB_R       13
 #define PIN_RGB_G       19
 #define PIN_RGB_B       27
+
 #define PIN_TRIG        2
 #define PIN_ECHO        34
 
@@ -42,5 +46,7 @@
 // Topic (请确保与云端规则一致)
 #define TOPIC_SUB       "/a1k6uay65rc/Catty01/user/control"  // 收指令
 #define TOPIC_PUB       "/a1k6uay65rc/Catty01/user/status"   // 发状态
+
+#define TOPIC_MEMO_PUB  "/a1k6uay65rc/Catty01/user/memo"     // 发备忘录
 
 #endif

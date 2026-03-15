@@ -35,7 +35,7 @@ void setup() {
     audio.setPinout(I2S_BCLK, I2S_LRC, I2S_DOUT);
     
     // 把音量调大一点测试
-    audio.setVolume(10); // 最大是21
+    audio.setVolume(5); // 最大是21
     
     // 播放一个比较稳定的流 (MP3)
     // 如果这个不响，可以换下面的备用链接

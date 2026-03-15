@@ -3,14 +3,15 @@
 #define I2S_WS 15
 #define I2S_SD 32
 #define I2S_SCK 14
+
 const int BLOCK_SIZE = 16000;
 int16_t samples[BLOCK_SIZE];
 int samples_count=0;
-int start_time=0;
 #define I2S_PORT I2S_NUM_1
 
 
 void setup() {
+  // put your setup code here, to run once:
   Serial.begin(115200);
   i2s_init();
   i2s_setpin();
@@ -19,24 +20,15 @@ void setup() {
 }
 
 void loop() {
-  int16_t sample = 0;
+  // put your main code here, to run repeatedly:
+  int16_t sample=0;
   size_t bytes = 0; // 新增：用于存储实际读取到的字节数
-
-  // 使用 i2s_read 替代 i2s_pop_sample
-  // 参数：端口号, 数据缓冲区地址, 缓冲区大小, 实际读取字节数指针, 等待时间
   i2s_read(I2S_PORT, &sample, sizeof(sample), &bytes, portMAX_DELAY);
-
+  
   if(bytes>0&&samples_count<BLOCK_SIZE){
-    if(samples_count==0){
-      start_time=millis();
-    }
-
     samples[samples_count]=sample;
     samples_count=samples_count+1;
   }else if(samples_count==BLOCK_SIZE){
-      int fin_time=millis()-start_time;
-      Serial.println(fin_time);
-
       for(int i=0;i<BLOCK_SIZE;i++){
         Serial.print(samples[i]);
         Serial.print(", ");
@@ -45,7 +37,6 @@ void loop() {
   }
 
 }
-
 
 void i2s_init(){
   const i2s_config_t i2s_config = {
@@ -61,11 +52,13 @@ void i2s_init(){
   };
   i2s_driver_install(I2S_PORT, &i2s_config, 0, NULL);
 }
+
+
 void i2s_setpin(){
   const i2s_pin_config_t pin_config = {
     .bck_io_num = I2S_SCK,
     .ws_io_num = I2S_WS,
-    .data_out_num = -1,
+    .data_out_num = -1,//data_out_num表示ESP32需要向外发送数据的引脚，由于在这个实验中占时不涉及到ESP32向麦克风发送数据，所以这里填写为-1。
     .data_in_num = I2S_SD
   };
   i2s_set_pin(I2S_PORT, &pin_config);

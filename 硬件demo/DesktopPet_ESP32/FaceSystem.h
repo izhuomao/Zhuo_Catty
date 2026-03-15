@@ -10,7 +10,6 @@
 #include <ArduinoJson.h>
 #include <time.h>
 #include "Config.h"      // 引用配置文件
-// #include "EmotionSystem.h" // 引用情绪定义(如果有的话，没有可以先去掉)
 
 #define SCREEN_WIDTH 128
 #define SCREEN_HEIGHT 64
@@ -131,6 +130,9 @@ class FaceSystem {
            else animateWink();
            break;
         }
+        case 20: showWeatherClock(); break;   // 显示天气界面
+        case 21: showTimeFull(); break;       // 显示时间界面
+        case 22: showMemoReminder(); break;   // ▼▼▼ 新增：备忘录提醒动画 ▼▼▼
         default: showNeutral(); break;
       }
     }
@@ -163,13 +165,56 @@ class FaceSystem {
     }
 
     void animateBegging() {
-       clear();
-       int sx = (SCREEN_WIDTH-(eye_w*2+eye_gap))/2; int sy = (SCREEN_HEIGHT-eye_h)/2;
-       drawRawEyes(sx, sy, eye_w, eye_h);
-       display.fillCircle(sx+10, sy+10, 6, SSD1306_BLACK);
-       display.fillCircle(sx+eye_w+eye_gap+10, sy+10, 6, SSD1306_BLACK);
-       show();
+       int sx = (SCREEN_WIDTH-(eye_w*2+eye_gap))/2; 
+       int sy = (SCREEN_HEIGHT-eye_h)/2;
+       int rx = sx + eye_w + eye_gap; // 右眼的起始X坐标
+
+       // 1. 蓄力前摇：眼睛先向下微缩，表现出“委屈巴巴”的低姿态
+       for(int i = 0; i <= 8; i+=4) {
+         clear();
+         drawRawEyes(sx, sy + i, eye_w, eye_h - i);
+         show();
+         delay(50);
+       }
+       
+       // 2. 展开撒娇：水汪汪的星星眼 + 八字眉形态 + 泪光微动
+       for(int bounce = 0; bounce < 3; bounce++) { // 循环3次产生眼巴巴的跳动感
+         for(int offset = 0; offset <= 3; offset += 3) {
+           clear();
+           
+           // 画基础眼眶：稍微变圆一点，位置跟随 offset 微动
+           int current_sy = sy + 2 + offset;
+           display.fillRoundRect(sx, current_sy, eye_w, eye_h - 4, radius + 4, SSD1306_WHITE);
+           display.fillRoundRect(rx, current_sy, eye_w, eye_h - 4, radius + 4, SSD1306_WHITE);
+           
+           // 【核心精髓】切掉外上角，形成“八字眉”的无辜感 (🥺 委屈形态)
+           // 左眼切左上角
+           display.fillTriangle(sx, current_sy - 2, sx + 20, current_sy - 2, sx, current_sy + 16, SSD1306_BLACK);
+           // 右眼切右上角
+           display.fillTriangle(rx + eye_w, current_sy - 2, rx + eye_w - 20, current_sy - 2, rx + eye_w, current_sy + 16, SSD1306_BLACK);
+
+           // 画巨大的黑色瞳孔，位置偏上（模拟抬头眼巴巴看人的感觉）
+           int pupil_r = 14;
+           int pupil_y = current_sy + eye_h/2 - 2;
+           display.fillCircle(sx + eye_w/2, pupil_y, pupil_r, SSD1306_BLACK);
+           display.fillCircle(rx + eye_w/2, pupil_y, pupil_r, SSD1306_BLACK);
+           
+           // 高光1：大圆（明亮的眼神）
+           display.fillCircle(sx + eye_w/2 + 4, pupil_y - 5, 4, SSD1306_WHITE);
+           display.fillCircle(rx + eye_w/2 + 4, pupil_y - 5, 4, SSD1306_WHITE);
+           
+           // 高光2：小圆（泪光闪烁动态效果）
+           // 利用 bounce 参数让小高光轻微闪烁/移动，显得更加灵动
+           int glint_offset = (bounce % 2 == 0) ? 0 : 1; 
+           display.fillCircle(sx + eye_w/2 - 5, pupil_y + 5 + glint_offset, 2, SSD1306_WHITE);
+           display.fillCircle(rx + eye_w/2 - 5, pupil_y + 5 + glint_offset, 2, SSD1306_WHITE);
+           
+           show();
+           delay(250); // 控制撒娇动作的节奏
+         }
+       }
     }
+
 
     void animateDetermined() {
        int sx = (SCREEN_WIDTH-(eye_w*2+eye_gap))/2; int sy = (SCREEN_HEIGHT-eye_h)/2; int rx=sx+eye_w+eye_gap;
@@ -237,6 +282,56 @@ class FaceSystem {
        show();
     }
 
+    // ▼▼▼ 新增：备忘录提醒动画 ▼▼▼
+    void showMemoReminder() {
+       // 第一阶段：闪烁感叹号警示 (吸引注意力)
+       for(int flash = 0; flash < 4; flash++) {
+         clear();
+         display.setTextSize(3);
+         display.setCursor(16, 5);
+         display.print("!! ");
+         display.setCursor(70, 5);
+         display.print(" !!");
+         // 中间画铃铛形状
+         display.fillCircle(64, 18, 10, SSD1306_WHITE);
+         display.fillRect(58, 28, 12, 4, SSD1306_WHITE);
+         display.fillRect(62, 32, 4, 4, SSD1306_WHITE);
+         display.setTextSize(1);
+         display.setCursor(30, 48);
+         display.print("== REMINDER ==");
+         show();
+         delay(300);
+         
+         clear();
+         // 只画大眼睛（闪烁效果）
+         int sx = (SCREEN_WIDTH-(eye_w*2+eye_gap))/2;
+         int sy = (SCREEN_HEIGHT-eye_h)/2;
+         drawRawEyes(sx, sy, eye_w, eye_h);
+         show();
+         delay(200);
+       }
+       
+       // 第二阶段：稳定显示提醒图标 + 文字（持续到语音播完）
+       clear();
+       // 上半部分：画两个睁大的"惊讶"眼睛
+       int sx = (SCREEN_WIDTH-(eye_w*2+eye_gap))/2;
+       int sy = 2;
+       display.fillRoundRect(sx, sy, eye_w, eye_h - 8, radius + 4, SSD1306_WHITE);
+       display.fillRoundRect(sx + eye_w + eye_gap, sy, eye_w, eye_h - 8, radius + 4, SSD1306_WHITE);
+       // 在眼睛里画大瞳孔
+       display.fillCircle(sx + eye_w/2, sy + (eye_h-8)/2, 10, SSD1306_BLACK);
+       display.fillCircle(sx + eye_w + eye_gap + eye_w/2, sy + (eye_h-8)/2, 10, SSD1306_BLACK);
+       // 高光
+       display.fillCircle(sx + eye_w/2 + 3, sy + (eye_h-8)/2 - 4, 3, SSD1306_WHITE);
+       display.fillCircle(sx + eye_w + eye_gap + eye_w/2 + 3, sy + (eye_h-8)/2 - 4, 3, SSD1306_WHITE);
+       // 下半部分：提醒文字
+       display.drawLine(0, 42, 128, 42, SSD1306_WHITE);
+       display.setTextSize(2);
+       display.setCursor(10, 48);
+       display.print("MEMO!!");
+       show();
+    }
+
     void updateWeather() {
       if(WiFi.status() == WL_CONNECTED){
         HTTPClient http;
@@ -266,6 +361,25 @@ class FaceSystem {
       display.setCursor(0, 55); display.print(weatherText); 
       show();
     }
+    void showTimeFull() {
+    struct tm timeinfo;
+    if(!getLocalTime(&timeinfo)) return;
+    clear();
+    char timeStr[6]; 
+    sprintf(timeStr, "%02d:%02d", timeinfo.tm_hour, timeinfo.tm_min);
+    display.setTextSize(3); 
+    display.setCursor(20, 8); 
+    display.print(timeStr);
+    
+    char dateStr[16];
+    sprintf(dateStr, "%04d/%02d/%02d", 
+            timeinfo.tm_year+1900, timeinfo.tm_mon+1, timeinfo.tm_mday);
+    display.setTextSize(1);
+    display.setCursor(25, 45);
+    display.print(dateStr);
+    show();
+    }
+
 };
 
 #endif

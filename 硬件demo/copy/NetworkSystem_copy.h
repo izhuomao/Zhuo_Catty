@@ -8,14 +8,12 @@
 #include "Config.h" 
 
 typedef std::function<void(int)> CommandCallback;
-typedef std::function<void(const char*)> ReminderCallback;  // ▼▼▼ 新增 ▼▼▼
 
 class NetworkSystem {
 private:
     WiFiClient espClient;
     PubSubClient client;
     CommandCallback actionHandler; 
-    ReminderCallback reminderHandler;  // ▼▼▼ 新增 ▼▼▼
     
     unsigned long lastReconnectAttempt = 0;
     unsigned long lastMsgTime = 0;
@@ -23,10 +21,9 @@ private:
 public:
     NetworkSystem() : client(espClient) {}
 
-    // ▼▼▼ 修改：增加提醒回调 ▼▼▼
-    void init(CommandCallback handler, ReminderCallback remHandler = nullptr) {
+    // 初始化：不再连WiFi，只设置 MQTT 参数
+    void init(CommandCallback handler) {
         actionHandler = handler;
-        reminderHandler = remHandler;
         client.setServer(MQTT_SERVER, MQTT_PORT);
         client.setCallback([this](char* topic, byte* payload, unsigned int length) {
             this->mqttCallback(topic, payload, length);
@@ -36,11 +33,15 @@ public:
         Serial.println("[MQTT] System Initialized");
     }
 
+    // 在 loop 中调用
     void update() {
+        // 1. 如果 WiFi 没连上，MQTT 啥也做不了，直接返回
+        // (连网的事交给 WifiSystem 去管)
         if (WiFi.status() != WL_CONNECTED) {
             return; 
         }
 
+        // 2. 检查 MQTT 连接
         if (!client.connected()) {
             unsigned long now = millis();
             if (now - lastReconnectAttempt > 5000) { 
@@ -50,19 +51,6 @@ public:
         } else {
             client.loop();  
             reportStatus(); 
-        }
-    }
-
-    void publishMemo(const char* memoJson) {
-        if (client.connected()) {
-            bool ok = client.publish(TOPIC_MEMO_PUB, memoJson);
-            if (ok) {
-                Serial.printf("[MQTT] 📝 备忘录已发布: %s\n", memoJson);
-            } else {
-                Serial.println("[MQTT] ❌ 备忘录发布失败");
-            }
-        } else {
-            Serial.println("[MQTT] ⚠️ 未连接，无法发布备忘录");
         }
     }
 
@@ -89,17 +77,6 @@ private:
 
         int targetActionId = -1;
         
-        // ▼▼▼ 新增：解析 reminder 指令 ▼▼▼
-        // App 发送格式: {"reminder":"提醒内容文本"}
-        if (doc.containsKey("reminder")) {
-            const char* reminderText = doc["reminder"];
-            Serial.printf("[MQTT] 🔔 收到提醒指令: %s\n", reminderText);
-            if (reminderHandler) {
-                reminderHandler(reminderText);
-            }
-            return;  // reminder 单独处理，不走 action 逻辑
-        }
-
         // 解析 move
         if (doc.containsKey("move")) {
              const char* cmd = doc["move"];
@@ -128,7 +105,7 @@ private:
 
     void reportStatus() {
         unsigned long now = millis();
-        if (now - lastMsgTime > 30000) {  // 30秒上报一次心跳
+        if (now - lastMsgTime > 3000) { 
             lastMsgTime = now;
             client.publish(TOPIC_PUB, "{\"status\":\"alive\"}");
         }

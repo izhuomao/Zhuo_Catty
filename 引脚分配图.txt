@@ -20,6 +20,10 @@ SDA->G21
 SCL->G22
 OE,V+悬空
 4引脚超声波模块
+VCC->5V
+Trig->G2
+Echo->G34
+GND->GND
 7引脚的OLED屏幕,引脚如下：
 VCC->3.3V
 GND->GND

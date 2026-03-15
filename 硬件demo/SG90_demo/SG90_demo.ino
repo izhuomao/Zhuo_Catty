@@ -1,109 +1,59 @@
 #include <Wire.h>
 #include <Adafruit_PWMServoDriver.h>
 
-// 创建驱动对象
 Adafruit_PWMServoDriver pwm = Adafruit_PWMServoDriver();
 
-// --- 配置区域 ---
-// 定义舵机连接的 PCA9685 通道号 (0-15)
-const int SERVO_1_CHANNEL = 0; // 第一个舵机插 0 口
-const int SERVO_2_CHANNEL = 1; // 第二个舵机插 1 口
-const int SERVO_3_CHANNEL = 2; // 第二个舵机插 2 口
-const int SERVO_4_CHANNEL = 3; // 第二个舵机插 3 口
-const int SERVO_5_CHANNEL = 4; // 第二个舵机插 3 口
+// --- 引脚定义 ---
+const int RF = 0; // 右前 (Right Front)
+const int LF = 1; // 左前 (Left Front)
+const int RB = 2; // 右后 (Right Behind)
+const int LB = 3; // 左后 (Left Behind)
 
+// --- 脉宽映射参数 ---
+#define SERVOMIN  120 
+#define SERVOMAX  550 
 
+// ==========================================
+// ⭐️ 核心微调区：舵机角度补偿数组 ⭐️
+// 分别对应 {RF右前, LF左前, RB右后, LB左后}
+// 正数代表顺时针加角度，负数代表逆时针减角度
+// ==========================================
+int servoOffsets[4] = {-5, 5, 5, -5}; 
 
-// 定义脉宽范围 (根据 SG90 调整)
-// 如果舵机此时还在滋滋响，微调这两个数
-#define SERVOMIN  120 // 0度
-#define SERVOMAX  550 // 180度
 
 void setup() {
   Serial.begin(115200);
   pwm.begin();
-  pwm.setPWMFreq(50);
+  pwm.setPWMFreq(50); // SG90标准频率 50Hz
 
-  // --- 关键修改：逐个唤醒舵机 ---
-  
-  // 1. 唤醒第 1 个
-  Serial.println("Waking up Servo 0...");
-  setServoAngle(0, 90); // 设定一个中间值
-  delay(500); // 【重要】给它 0.5秒 时间归位，等电流降下去
-
-  // 2. 唤醒第 2 个
-  Serial.println("Waking up Servo 1...");
-  setServoAngle(1, 90);
-  delay(500);
-
-  // 3. 唤醒第 3 个
-  Serial.println("Waking up Servo 2...");
-  setServoAngle(2, 90);
-  delay(500);
-
-  // 4. 唤醒第 4 个
-  Serial.println("Waking up Servo 3...");
-  setServoAngle(3, 90);
-  delay(500);
-
-  Serial.println("Waking up Servo 3...");
-  setServoAngle(4, 90);
-  delay(500);
-
-  Serial.println("All servos ready!");
+  Serial.println("=== 机器狗 90度 校准模式已启动 ===");
+  Serial.println("请观察四条腿是否垂直。");
+  Serial.println("如不垂直，请修改 servoOffsets 数组并重新烧录。");
 }
-
 
 void loop() {
-  // ------------------------------------------------
-  // 场景 1：完全同步 (Simultaneous)
-  // 两个舵机做一模一样的动作
-  // ------------------------------------------------
-  Serial.println("动作 1：双舵机同步归零 (0度)");
-  setServoAngle(SERVO_1_CHANNEL, 0);
-  setServoAngle(SERVO_2_CHANNEL, 0);
-  setServoAngle(SERVO_3_CHANNEL, 0);
-  setServoAngle(SERVO_4_CHANNEL, 0);
-  setServoAngle(SERVO_5_CHANNEL, 0);
-
-  delay(1000); // 等待它们转到位
-
-  Serial.println("动作 2：双舵机同步转中 (90度)");
-  setServoAngle(SERVO_1_CHANNEL, 180);
-  setServoAngle(SERVO_2_CHANNEL, 180);
-  setServoAngle(SERVO_3_CHANNEL, 180);
-  setServoAngle(SERVO_4_CHANNEL, 180);
-  setServoAngle(SERVO_5_CHANNEL, 180);
-
-  delay(1000);
-
-  // ------------------------------------------------
-  // 场景 2：反向动作 (Opposite)
-  // 模拟机械爪开合，或者走路的样子
-  // ------------------------------------------------
-  // Serial.println("动作 3：反向动作 (0 vs 180)");
-  // setServoAngle(SERVO_1_CHANNEL, 0);   // 舵机1 去 0度
-  // setServoAngle(SERVO_2_CHANNEL, 180); // 舵机2 去 180度
-  // delay(1000);
-
-  // Serial.println("动作 4：反向动作交换 (180 vs 0)");
-  // setServoAngle(SERVO_1_CHANNEL, 180);
-  // setServoAngle(SERVO_2_CHANNEL, 0);
-  // delay(1000);
+  // 不断发送 90 度指令，让舵机处于“锁齿”发力状态
+  setServoAngle(RF, 90);
+  setServoAngle(LF, 90);
+  setServoAngle(RB, 90);
+  setServoAngle(LB, 90);
+  
+  delay(1000); // 每秒刷新一次
 }
 
-// --- 封装好的辅助函数 (直接复制即可) ---
-// 作用：把角度 (0-180) 转换成 PWM 脉冲并发送给 PCA9685
+// ==========================================
+// 底层驱动函数 (已加入补偿防越界逻辑)
+// ==========================================
 void setServoAngle(uint8_t channel, int angle) {
-  // 1. 限制角度在安全范围内
-  if (angle < 0) angle = 0;
-  if (angle > 180) angle = 180;
-
-  // 2. 将角度 (0-180) 映射为 脉冲数值 (SERVOMIN - SERVOMAX)
-  int pulse = map(angle, 0, 180, SERVOMIN, SERVOMAX);
-
-  // 3. 发送指令
-  // 0 表示从周期的开头就开始供电 (ON)
-  // pulse 表示在什么时候切断供电 (OFF)
+  // 1. 加上对应的偏移补偿量
+  int realAngle = angle + servoOffsets[channel];
+  
+  // 2. 安全限幅：防止补偿后角度超出 0~180 范围，导致扫齿
+  if (realAngle < 0) realAngle = 0;
+  if (realAngle > 180) realAngle = 180;
+  
+  // 3. 映射并输出 PWM
+  int pulse = map(realAngle, 0, 180, SERVOMIN, SERVOMAX);
   pwm.setPWM(channel, 0, pulse);
 }
+

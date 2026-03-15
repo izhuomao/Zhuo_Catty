@@ -1,5 +1,5 @@
 /*
- * 桌宠主程序框架
+ * 桌宠主程序框架 - 双核并行版 (备忘录+提醒版)
  */
 #include "Config.h"
 #include "FaceSystem.h"
@@ -7,7 +7,8 @@
 #include "LedSystem.h"
 #include "NetworkSystem.h"
 #include "WifiSystem.h"
-// 未来你会这里加: #include "MotionSystem.h" 等
+#include "MotionSystem.h"
+#include "VoiceSystem.h"
 
 // 实例化模块
 WifiSystem wifi;
@@ -15,49 +16,133 @@ FaceSystem face;
 NetworkSystem network;
 LedSystem led;
 SensorSystem sensor;
+MotionSystem motion;
+VoiceSystem voice;   
 
-int currentActionId = 0;   // 当前动作ID
+// --- 双核同步变量 ---
+volatile int pendingActionId = -1;
+TaskHandle_t VoiceTaskHandle = NULL;
+TaskHandle_t MotionTaskHandle = NULL;
+
+// --- 备忘录跨核心转发缓冲 ---
+#define MEMO_FORWARD_BUF_SIZE 512
+char memoForwardBuf[MEMO_FORWARD_BUF_SIZE];
+volatile bool memoReadyToPublish = false;
+
+// --- ▼▼▼ 新增：提醒请求缓冲（MQTT → VoiceSystem） ▼▼▼ ---
+#define REMIND_FORWARD_BUF_SIZE 256
+char remindForwardBuf[REMIND_FORWARD_BUF_SIZE];
+volatile bool hasRemindRequest = false;
+
+// 函数声明
 void setGlobalState(int id);
+void onMemoFromVoice(const char* memoJson);
+void onReminderFromMqtt(const char* reminderText);
+
+// ================= 核心 1 任务：动作、表情、传感器 =================
+void MotionTask(void * pvParameters) {
+  for(;;) {
+    if (pendingActionId != -1) {
+      int id = pendingActionId;
+      pendingActionId = -1;
+      face.execAction(id);
+      motion.execAction(id);
+    }
+    face.keepAlive();
+    sensor.init();
+    vTaskDelay(10 / portTICK_PERIOD_MS); 
+  }
+}
+
+// ================= 核心 0 任务：语音、WiFi、网络 =================
+void VoiceTask(void * pvParameters) {
+  for(;;) {
+    voice.update();
+    wifi.maintain();
+    network.update();
+    
+    // 检查是否有待转发的备忘录（语音录入 → MQTT → App）
+    if (memoReadyToPublish) {
+      network.publishMemo(memoForwardBuf);
+      memoReadyToPublish = false;
+    }
+    
+    // ▼▼▼ 新增：检查是否有待处理的提醒请求（App MQTT → VoiceSystem → Python TTS） ▼▼▼
+    if (hasRemindRequest) {
+      voice.requestRemindTTS(remindForwardBuf);
+      hasRemindRequest = false;
+    }
+    
+    vTaskDelay(1 / portTICK_PERIOD_MS);
+  }
+}
 
 void setup() {
   Serial.begin(115200);
 
   wifi.init(); 
-  
-  // 初始化屏幕模块 (内部会自动连WiFi、对时)
+  motion.init();
   face.init();
-  network.init(setGlobalState);
-  led.init();//强制把RGB灯先熄灭
-  sensor.init();
-
-  Serial.println(">>> 桌宠启动成功 <<<");
-  // Serial.println("输入数字 0-13 控制表情");
   
+  // ▼▼▼ 修改：传入提醒回调 ▼▼▼
+  network.init(setGlobalState, onReminderFromMqtt);
+  
+  led.init(); 
+  sensor.init();
+  voice.init(setGlobalState, onMemoFromVoice);
+
+  Serial.println(">>> 桌宠启动成功 (双核+备忘录+提醒) <<<");
+
+  xTaskCreatePinnedToCore(
+    VoiceTask, "VoiceTask", 10000, NULL, 3, &VoiceTaskHandle, 0
+  );
+
+  xTaskCreatePinnedToCore(
+    MotionTask, "MotionTask", 10000, NULL, 1, &MotionTaskHandle, 1
+  );
+
+  setGlobalState(3);
 }
 
 void loop() {
-  // 1. 串口指令测试 (模拟外部指令)
-  // if (Serial.available() > 0) {
-  //   int cmd = Serial.parseInt();
-  //   while(Serial.available()) Serial.read(); 
-    
-  //   // 调用 FaceSystem 的接口
-  //   face.execAction(cmd);
-  // }
-
-  // 2. 维持后台任务 (必须有！)
-  // 这行代码会让屏幕在没事干的时候显示时钟和天气
-  face.keepAlive();
-  wifi.maintain();
-  network.update();
+  vTaskDelay(1000 / portTICK_PERIOD_MS);
 }
-void setGlobalState(int id) {
-    Serial.printf(">>> 收到指令，执行 ID: %d\n", id);
 
-    // 这里是你统一调用其他模块的地方
-    face.execAction(id);
-    // motion.execAction(id);
-    // led.setMood(id);
+// 状态分发
+void setGlobalState(int id) {
+    Serial.printf(">>> 收到指令，分发 ID: %d\n", id);
     
-    // 比如：MQTT 收到 {"action":"greet"} -> 翻译成 10 -> 调用此函数 -> 执行打招呼
+    if (id == 16) { led.showRed(); return; } 
+    if (id == 17) { led.showBlue(); return; }
+    if (id == 18) { led.showGreen(); return; } 
+    
+    if (id == 3) {
+        led.turnOff();
+        pendingActionId = 3;
+    } else {
+        pendingActionId = id; 
+    }
+}
+
+// 备忘录回调（VoiceSystem 收到 MEMO 包后调用，在核心0上执行）
+void onMemoFromVoice(const char* memoJson) {
+    Serial.printf("📝 [主程序] 收到语音备忘录，准备通过 MQTT 转发\n");
+    int len = strlen(memoJson);
+    if (len < MEMO_FORWARD_BUF_SIZE - 1) {
+        strncpy(memoForwardBuf, memoJson, MEMO_FORWARD_BUF_SIZE - 1);
+        memoForwardBuf[MEMO_FORWARD_BUF_SIZE - 1] = '\0';
+        memoReadyToPublish = true;
+    }
+}
+
+// ▼▼▼ 新增：提醒回调（NetworkSystem 收到 MQTT 提醒指令后调用） ▼▼▼
+// App 闹钟触发 → MQTT → NetworkSystem → 这里 → VoiceSystem → UDP → Python TTS → 播放
+void onReminderFromMqtt(const char* reminderText) {
+    Serial.printf("🔔 [主程序] 收到 MQTT 提醒: %s\n", reminderText);
+    int len = strlen(reminderText);
+    if (len < REMIND_FORWARD_BUF_SIZE - 1) {
+        strncpy(remindForwardBuf, reminderText, REMIND_FORWARD_BUF_SIZE - 1);
+        remindForwardBuf[REMIND_FORWARD_BUF_SIZE - 1] = '\0';
+        hasRemindRequest = true;
+    }
 }

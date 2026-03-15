@@ -1,4 +1,3 @@
-#include "RgbLed.h"
 #include <driver/i2s.h>
 #include <WiFi.h>
 #include <WebServer.h>
@@ -10,7 +9,6 @@
 #define I2S_WS 15
 #define I2S_SD 32
 #define I2S_SCK 14
-RgbLed myLed(13, 19, 27);
 
 const int BLOCK_SIZE = 512;
 const double SAMPLING_FREQUENCY = 44100;
@@ -28,19 +26,6 @@ ArduinoFFT<double> FFT = ArduinoFFT<double>(vReal, vImag, BLOCK_SIZE, SAMPLING_F
 String labels[] = {"125", "250", "500", "1K", "2K", "4K", "8K", "16K"};
 int bands[8] = {0, 0, 0, 0, 0, 0, 0, 0};
 const uint8_t amplitude = 150;
-
-const int record_num=50;
-float record_125[record_num];
-float record_250[record_num];
-float record_500[record_num];
-float record_1k[record_num];
-float record_2k[record_num];
-float record_4k[record_num];
-float record_8k[record_num];
-float record_16k[record_num];
-int data_count=0;
-int n=100; //声音的次数
-
 
 const char * ssid = "茁猫阿姨洗铁路";
 const char * password = "12345678";
@@ -139,9 +124,7 @@ void setup() {
     delay(500);
   }
   Serial.println("\nIP Address: " + WiFi.localIP().toString());
-
-  myLed.begin();
-
+  
   server.on("/",[](){ server.send_P(200, "text/html", webpage); });
   server.begin();
   webSocket.begin();
@@ -157,8 +140,8 @@ void loop() {
   if (bytes_read > 0) {
       FFT_Operation();
       constrain128();
-      Check_Start();
       Send_Msg();
+
   }
 }
 
@@ -195,14 +178,6 @@ void FFT_Operation(){
   }
 }
 
-void constrain128(){
-      for(int j=0;j<8;j++){
-      bands[j]=int(bands[j]*(128.0/100000));
-      bands[j]=constrain(bands[j],0,128);
-    }
-}
-
-
 void Send_Msg() {
   // 【优化】使用 ArduinoJson 生成 JSON，防止内存错误
   JsonDocument doc; // 自动管理内存 (ArduinoJson v7)
@@ -218,71 +193,9 @@ void Send_Msg() {
   webSocket.broadcastTXT(jsonString);
 }
 
-
-int bsum=0;
-int Threshold_HIGH=40;
-int Threshold_LOW=20;
-int smooth_count=0;
-int record_count=-1;
-
-void Check_Start(){
-    bsum=0;
-    for(int j=0;j<8;j++){
-      bsum=bsum+bands[j];
+void constrain128(){
+      for(int j=0;j<8;j++){
+      bands[j]=int(bands[j]*(128.0/100000));
+      bands[j]=constrain(bands[j],0,128);
     }
-
-    if(bsum>=Threshold_HIGH&&record_count==-1){
-      data_count++;
-      if(data_count==n){
-        myLed.showRed(50);
-      }else if(data_count>n){
-        myLed.showBlue(50);
-      }else{
-        myLed.showGreen(50);
-      }
-
-      record_count=0;
-    }
-
-    if(record_count<record_num&&record_count!=-1)//收集30条数据
-    {
-        record_125[record_count]= bands[0];
-        record_250[record_count]= bands[1];
-        record_500[record_count]= bands[2];
-        record_1k[record_count]= bands[3];
-        record_2k[record_count]= bands[4];
-        record_4k[record_count]= bands[5];
-        record_8k[record_count]= bands[6];
-        record_16k[record_count]= bands[7];
-        record_count++;
-    }
-
-    if(record_count==record_num)//收集完成一次声音的30个元组数据
-      {
-          for(int k=0;k<record_count;k++){
-            Serial.print(record_125[k]);
-            Serial.print(",");
-            Serial.print(record_250[k]);
-            Serial.print(",");
-            Serial.print(record_500[k]);
-            Serial.print(",");
-            Serial.print(record_1k[k]);
-            Serial.print(",");
-            Serial.print(record_2k[k]);
-            Serial.print(",");
-            Serial.print(record_4k[k]);
-            Serial.print(",");
-            Serial.print(record_8k[k]);
-            Serial.print(",");
-            Serial.print(record_16k[k]);
-            Serial.println("");
-          }
-          // Serial.println("检测完成");
-          // Serial.print("收集到的元组数为：");
-          // Serial.println(record_count);
-
-          record_count=-1;
-      }
-
-
 }
