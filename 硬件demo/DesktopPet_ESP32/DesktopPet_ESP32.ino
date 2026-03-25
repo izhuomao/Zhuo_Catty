@@ -80,6 +80,11 @@ void VoiceTask(void * pvParameters) {
 void setup() {
   Serial.begin(115200);
 
+  // 打印上次重启原因
+  esp_reset_reason_t reason = esp_reset_reason();
+  Serial.printf("上次重启原因: %d\n", reason);
+  // 3 = SW_RESET, 9 = BROWNOUT, 12 = WDT
+
   wifi.init(); 
   motion.init();
   face.init();
