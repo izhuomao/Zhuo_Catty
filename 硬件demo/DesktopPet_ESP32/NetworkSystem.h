@@ -8,22 +8,25 @@
 #include "Config.h" 
 
 typedef std::function<void(int)> CommandCallback;
-typedef std::function<void(const char*)> ReminderCallback;  // ▼▼▼ 新增 ▼▼▼
+typedef std::function<void(const char*)> ReminderCallback;
 
 class NetworkSystem {
 private:
     WiFiClient espClient;
     PubSubClient client;
     CommandCallback actionHandler; 
-    ReminderCallback reminderHandler;  // ▼▼▼ 新增 ▼▼▼
+    ReminderCallback reminderHandler;
     
     unsigned long lastReconnectAttempt = 0;
     unsigned long lastMsgTime = 0;
 
+    // ▼▼▼ 新增：缓存情感数据，随心跳一起上报给手机APP ▼▼▼
+    int cachedMood = 50;
+    int cachedIntimacy = 20;
+
 public:
     NetworkSystem() : client(espClient) {}
 
-    // ▼▼▼ 修改：增加提醒回调 ▼▼▼
     void init(CommandCallback handler, ReminderCallback remHandler = nullptr) {
         actionHandler = handler;
         reminderHandler = remHandler;
@@ -37,10 +40,7 @@ public:
     }
 
     void update() {
-        if (WiFi.status() != WL_CONNECTED) {
-            return; 
-        }
-
+        if (WiFi.status() != WL_CONNECTED) return; 
         if (!client.connected()) {
             unsigned long now = millis();
             if (now - lastReconnectAttempt > 5000) { 
@@ -53,14 +53,27 @@ public:
         }
     }
 
+    // ▼▼▼ 新增：更新情感缓存 + 立即上报 ▼▼▼
+    void setEmotionData(int mood, int intimacy) {
+        cachedMood = mood;
+        cachedIntimacy = intimacy;
+        Serial.printf("[MQTT] 💖 情感数据已缓存: mood=%d, intimacy=%d\n", mood, intimacy);
+        
+        if (client.connected()) {
+            char buf[128];
+            snprintf(buf, sizeof(buf), 
+                "{\"status\":\"alive\",\"mood\":%d,\"intimacy\":%d}", 
+                cachedMood, cachedIntimacy);
+            client.publish(TOPIC_PUB, buf);
+            Serial.printf("[MQTT] 💖 情感状态已即时上报\n");
+        }
+    }
+
     void publishMemo(const char* memoJson) {
         if (client.connected()) {
             bool ok = client.publish(TOPIC_MEMO_PUB, memoJson);
-            if (ok) {
-                Serial.printf("[MQTT] 📝 备忘录已发布: %s\n", memoJson);
-            } else {
-                Serial.println("[MQTT] ❌ 备忘录发布失败");
-            }
+            if (ok) Serial.printf("[MQTT] 📝 备忘录已发布: %s\n", memoJson);
+            else Serial.println("[MQTT] ❌ 备忘录发布失败");
         } else {
             Serial.println("[MQTT] ⚠️ 未连接，无法发布备忘录");
         }
@@ -89,18 +102,13 @@ private:
 
         int targetActionId = -1;
         
-        // ▼▼▼ 新增：解析 reminder 指令 ▼▼▼
-        // App 发送格式: {"reminder":"提醒内容文本"}
         if (doc.containsKey("reminder")) {
             const char* reminderText = doc["reminder"];
             Serial.printf("[MQTT] 🔔 收到提醒指令: %s\n", reminderText);
-            if (reminderHandler) {
-                reminderHandler(reminderText);
-            }
-            return;  // reminder 单独处理，不走 action 逻辑
+            if (reminderHandler) reminderHandler(reminderText);
+            return;
         }
 
-        // 解析 move
         if (doc.containsKey("move")) {
              const char* cmd = doc["move"];
              if (strcmp(cmd, "forward") == 0) targetActionId = 5;
@@ -109,7 +117,6 @@ private:
              else if (strcmp(cmd, "right") == 0) targetActionId = 8;
              else if (strcmp(cmd, "stop") == 0) targetActionId = 12;
         }
-        // 解析 action
         if (doc.containsKey("action")) {
              const char* cmd = doc["action"];
              if (strcmp(cmd, "sleep") == 0) targetActionId = 1;
@@ -126,11 +133,16 @@ private:
         if (targetActionId != -1 && actionHandler) actionHandler(targetActionId);
     }
 
+    // ▼▼▼ 修改：心跳包带上情感数据 ▼▼▼
     void reportStatus() {
         unsigned long now = millis();
-        if (now - lastMsgTime > 30000) {  // 30秒上报一次心跳
+        if (now - lastMsgTime > 30000) {
             lastMsgTime = now;
-            client.publish(TOPIC_PUB, "{\"status\":\"alive\"}");
+            char buf[128];
+            snprintf(buf, sizeof(buf), 
+                "{\"status\":\"alive\",\"mood\":%d,\"intimacy\":%d}", 
+                cachedMood, cachedIntimacy);
+            client.publish(TOPIC_PUB, buf);
         }
     }
 };

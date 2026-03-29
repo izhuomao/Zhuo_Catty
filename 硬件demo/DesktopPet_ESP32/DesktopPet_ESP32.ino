@@ -1,5 +1,5 @@
 /*
- * 桌宠主程序框架 - 双核并行版 (备忘录+提醒版)
+ * 桌宠主程序 - 双核并行版 (备忘录+提醒+情感记忆版)
  */
 #include "Config.h"
 #include "FaceSystem.h"
@@ -10,7 +10,6 @@
 #include "MotionSystem.h"
 #include "VoiceSystem.h"
 
-// 实例化模块
 WifiSystem wifi;
 FaceSystem face;
 NetworkSystem network;
@@ -19,27 +18,33 @@ SensorSystem sensor;
 MotionSystem motion;
 VoiceSystem voice;   
 
-// --- 双核同步变量 ---
 volatile int pendingActionId = -1;
 TaskHandle_t VoiceTaskHandle = NULL;
 TaskHandle_t MotionTaskHandle = NULL;
 
-// --- 备忘录跨核心转发缓冲 ---
 #define MEMO_FORWARD_BUF_SIZE 512
 char memoForwardBuf[MEMO_FORWARD_BUF_SIZE];
 volatile bool memoReadyToPublish = false;
 
-// --- ▼▼▼ 新增：提醒请求缓冲（MQTT → VoiceSystem） ▼▼▼ ---
 #define REMIND_FORWARD_BUF_SIZE 256
 char remindForwardBuf[REMIND_FORWARD_BUF_SIZE];
 volatile bool hasRemindRequest = false;
 
-// 函数声明
+// ▼▼▼ 新增：情感状态全局变量 ▼▼▼
+volatile int globalMood = 50;
+volatile int globalIntimacy = 20;
+volatile bool emotionUpdated = false;
+
+// ▼▼▼ 新增：APP 互动通知标志 ▼▼▼
+volatile bool hasAppInteract = false;
+
 void setGlobalState(int id);
+void onMqttCommand(int id);  // ▼▼▼ 新增：MQTT 指令专用回调 ▼▼▼
 void onMemoFromVoice(const char* memoJson);
 void onReminderFromMqtt(const char* reminderText);
+void onEmotionFromVoice(int mood, int intimacy);
 
-// ================= 核心 1 任务：动作、表情、传感器 =================
+// ================= 核心 1：动作、表情、传感器 =================
 void MotionTask(void * pvParameters) {
   for(;;) {
     if (pendingActionId != -1) {
@@ -48,29 +53,42 @@ void MotionTask(void * pvParameters) {
       face.execAction(id);
       motion.execAction(id);
     }
+    
+    // ▼▼▼ 新增：应用情感数据到表情和舵机 ▼▼▼
+    if (emotionUpdated) {
+      emotionUpdated = false;
+      int mood = globalMood;
+      face.setMood(mood);
+      motion.setMoodSpeed(mood);
+    }
+    
     face.keepAlive();
     sensor.init();
     vTaskDelay(10 / portTICK_PERIOD_MS); 
   }
 }
 
-// ================= 核心 0 任务：语音、WiFi、网络 =================
+// ================= 核心 0：语音、WiFi、网络 =================
 void VoiceTask(void * pvParameters) {
   for(;;) {
     voice.update();
     wifi.maintain();
     network.update();
     
-    // 检查是否有待转发的备忘录（语音录入 → MQTT → App）
     if (memoReadyToPublish) {
       network.publishMemo(memoForwardBuf);
       memoReadyToPublish = false;
     }
     
-    // ▼▼▼ 新增：检查是否有待处理的提醒请求（App MQTT → VoiceSystem → Python TTS） ▼▼▼
     if (hasRemindRequest) {
       voice.requestRemindTTS(remindForwardBuf);
       hasRemindRequest = false;
+    }
+    
+    // ▼▼▼ 新增：转发 APP 互动通知给 PC ▼▼▼
+    if (hasAppInteract) {
+      voice.requestAppInteract();
+      hasAppInteract = false;
     }
     
     vTaskDelay(1 / portTICK_PERIOD_MS);
@@ -80,31 +98,23 @@ void VoiceTask(void * pvParameters) {
 void setup() {
   Serial.begin(115200);
 
-  // 打印上次重启原因
   esp_reset_reason_t reason = esp_reset_reason();
   Serial.printf("上次重启原因: %d\n", reason);
-  // 3 = SW_RESET, 9 = BROWNOUT, 12 = WDT
 
   wifi.init(); 
   motion.init();
   face.init();
-  
-  // ▼▼▼ 修改：传入提醒回调 ▼▼▼
-  network.init(setGlobalState, onReminderFromMqtt);
-  
+  network.init(onMqttCommand, onReminderFromMqtt);  // ▼▼▼ 改用 onMqttCommand ▼▼▼
   led.init(); 
   sensor.init();
-  voice.init(setGlobalState, onMemoFromVoice);
+  
+  // ▼▼▼ 修改：传入情感数据回调 ▼▼▼
+  voice.init(setGlobalState, onMemoFromVoice, onEmotionFromVoice);
 
-  Serial.println(">>> 桌宠启动成功 (双核+备忘录+提醒) <<<");
+  Serial.println(">>> 桌宠启动成功 (双核+备忘录+提醒+情感记忆) <<<");
 
-  xTaskCreatePinnedToCore(
-    VoiceTask, "VoiceTask", 10000, NULL, 3, &VoiceTaskHandle, 0
-  );
-
-  xTaskCreatePinnedToCore(
-    MotionTask, "MotionTask", 10000, NULL, 1, &MotionTaskHandle, 1
-  );
+  xTaskCreatePinnedToCore(VoiceTask, "VoiceTask", 10000, NULL, 3, &VoiceTaskHandle, 0);
+  xTaskCreatePinnedToCore(MotionTask, "MotionTask", 10000, NULL, 1, &MotionTaskHandle, 1);
 
   setGlobalState(3);
 }
@@ -113,14 +123,18 @@ void loop() {
   vTaskDelay(1000 / portTICK_PERIOD_MS);
 }
 
-// 状态分发
+// ▼▼▼ 新增：MQTT 指令专用回调（APP 遥控时触发） ▼▼▼
+void onMqttCommand(int id) {
+    Serial.printf("📱 [主程序] 收到 MQTT 指令: %d，标记 APP 互动\n", id);
+    setGlobalState(id);
+    hasAppInteract = true;
+}
+
 void setGlobalState(int id) {
     Serial.printf(">>> 收到指令，分发 ID: %d\n", id);
-    
     if (id == 16) { led.showRed(); return; } 
     if (id == 17) { led.showBlue(); return; }
     if (id == 18) { led.showGreen(); return; } 
-    
     if (id == 3) {
         led.turnOff();
         pendingActionId = 3;
@@ -129,7 +143,6 @@ void setGlobalState(int id) {
     }
 }
 
-// 备忘录回调（VoiceSystem 收到 MEMO 包后调用，在核心0上执行）
 void onMemoFromVoice(const char* memoJson) {
     Serial.printf("📝 [主程序] 收到语音备忘录，准备通过 MQTT 转发\n");
     int len = strlen(memoJson);
@@ -140,8 +153,6 @@ void onMemoFromVoice(const char* memoJson) {
     }
 }
 
-// ▼▼▼ 新增：提醒回调（NetworkSystem 收到 MQTT 提醒指令后调用） ▼▼▼
-// App 闹钟触发 → MQTT → NetworkSystem → 这里 → VoiceSystem → UDP → Python TTS → 播放
 void onReminderFromMqtt(const char* reminderText) {
     Serial.printf("🔔 [主程序] 收到 MQTT 提醒: %s\n", reminderText);
     int len = strlen(reminderText);
@@ -150,4 +161,15 @@ void onReminderFromMqtt(const char* reminderText) {
         remindForwardBuf[REMIND_FORWARD_BUF_SIZE - 1] = '\0';
         hasRemindRequest = true;
     }
+}
+
+// ▼▼▼ 新增：情感数据回调 ▼▼▼
+void onEmotionFromVoice(int mood, int intimacy) {
+    Serial.printf("💖 [主程序] 收到情感数据: mood=%d, intimacy=%d\n", mood, intimacy);
+    globalMood = mood;
+    globalIntimacy = intimacy;
+    emotionUpdated = true;
+    
+    // 把情感数据同步给 NetworkSystem，通过 MQTT 上报给手机 APP
+    network.setEmotionData(mood, intimacy);
 }

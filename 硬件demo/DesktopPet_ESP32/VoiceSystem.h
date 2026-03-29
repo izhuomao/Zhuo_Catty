@@ -24,7 +24,7 @@ static const int VOICE_PC_PORT = 12345;
 #define VOICE_SPK_I2S_DIN  33
 
 #define MEMO_BUF_SIZE 512
-#define REMIND_BUF_SIZE 256  // ▼▼▼ 新增：提醒文本缓冲 ▼▼▼
+#define REMIND_BUF_SIZE 256
 
 class VoiceSystem {
 private:
@@ -51,12 +51,16 @@ private:
 
     void (*_onActionTrigger)(int) = nullptr;
     void (*_onMemoReceived)(const char*) = nullptr;
+    void (*_onEmotionReceived)(int, int) = nullptr;  // ▼▼▼ 新增：情感数据回调 (mood, intimacy) ▼▼▼
+    
     char memoBuf[MEMO_BUF_SIZE];
     volatile bool hasPendingMemo = false;
 
-    // ▼▼▼ 新增：提醒 TTS 请求缓冲 ▼▼▼
     char remindBuf[REMIND_BUF_SIZE];
     volatile bool hasPendingRemind = false;
+
+    // ▼▼▼ 新增：APP 互动通知标志 ▼▼▼
+    volatile bool hasPendingAppInteract = false;
 
     void i2s_install() {
         i2s_config_t mic_config = {
@@ -99,9 +103,14 @@ public:
         memset(remindBuf, 0, REMIND_BUF_SIZE);
     }
 
-    void init(void (*actionCallback)(int), void (*memoCallback)(const char*) = nullptr) {
+    // ▼▼▼ 修改：增加第三个参数 emotionCallback ▼▼▼
+    void init(void (*actionCallback)(int), 
+              void (*memoCallback)(const char*) = nullptr,
+              void (*emotionCallback)(int, int) = nullptr) {
         _onActionTrigger = actionCallback;
         _onMemoReceived = memoCallback;
+        _onEmotionReceived = emotionCallback;
+        
         tensorArena = (uint8_t*)malloc(tensorArenaSize);
         i2s_install();
 
@@ -114,8 +123,6 @@ public:
         udp.begin(VOICE_PC_PORT);
     }
 
-    // ▼▼▼ 新增：请求提醒 TTS ▼▼▼
-    // 由主程序调用，将提醒文本暂存，等 STATE_WAKEUP 时发给 Python
     void requestRemindTTS(const char* text) {
         int len = strlen(text);
         if (len > 0 && len < REMIND_BUF_SIZE - 1) {
@@ -126,28 +133,58 @@ public:
         }
     }
 
+    // ▼▼▼ 新增：通知 PC 端 APP 发生了互动 ▼▼▼
+    void requestAppInteract() {
+        hasPendingAppInteract = true;
+    }
+
     void update() {
         switch (currentState) {
             case STATE_WAKEUP: {
-                // ▼▼▼ 新增：优先检查是否有待发送的提醒 TTS 请求 ▼▼▼
                 if (hasPendingRemind) {
                     hasPendingRemind = false;
                     Serial.println("[Voice] 🔔 发送 REMIND 包给 Python...");
-
-                    // 构造 REMIND:文本 包
                     String packet = "REMIND:" + String(remindBuf);
                     udp.beginPacket(VOICE_PC_IP, VOICE_PC_PORT);
                     udp.write((uint8_t*)packet.c_str(), packet.length());
                     udp.endPacket();
-
-                    // 切换到等待状态，等待 Python 回传 CMD + 音频
-                    if(_onActionTrigger) _onActionTrigger(17); // 蓝灯表示处理中
+                    if(_onActionTrigger) _onActionTrigger(17);
                     recordStartTime = millis();
                     currentState = STATE_WAITING;
                     break;
                 }
 
-                // 正常唤醒词检测逻辑（不变）
+                // ▼▼▼ 新增：发送 APP 互动通知给 PC（不切换状态，发完继续检测唤醒词） ▼▼▼
+                if (hasPendingAppInteract) {
+                    hasPendingAppInteract = false;
+                    udp.beginPacket(VOICE_PC_IP, VOICE_PC_PORT);
+                    udp.write((uint8_t*)"APP_INTERACT", 12);
+                    udp.endPacket();
+                    Serial.println("[Voice] 📱 发送 APP 互动通知给 Python");
+                }
+
+                // ▼▼▼ 新增：在唤醒状态下也检查 UDP，处理 PC 回传的 EMO 包 ▼▼▼
+                {
+                    int pkt = udp.parsePacket();
+                    if (pkt > 0) {
+                        char tmpBuf[64];
+                        int tmpLen = udp.read(tmpBuf, sizeof(tmpBuf) - 1);
+                        if (tmpLen > 0) {
+                            tmpBuf[tmpLen] = '\0';
+                            if (tmpLen >= 4 && strncmp(tmpBuf, "EMO:", 4) == 0) {
+                                int mood = 50, intimacy = 20;
+                                if (sscanf(&tmpBuf[4], "%d,%d", &mood, &intimacy) == 2) {
+                                    Serial.printf("💖 [唤醒态] 收到情感数据: mood=%d, intimacy=%d\n", mood, intimacy);
+                                    if (_onEmotionReceived) {
+                                        _onEmotionReceived(mood, intimacy);
+                                    }
+                                }
+                            }
+                            // 其他类型的包在唤醒态忽略
+                        }
+                    }
+                }
+
                 size_t read;
                 i2s_read(I2S_NUM_0, samples, BLOCK_SIZE * 2, &read, portMAX_DELAY);
                 for (int i=0; i<BLOCK_SIZE; i++) { vReal[i] = samples[i]*256.0; vImag[i] = 0; }
@@ -214,7 +251,7 @@ public:
                     int len = udp.read(buff, 1460);
                     
                     if (len > 0) {
-                        // 1. 动作/表情指令包 "CMD:ID"
+                        // 1. 动作指令包 "CMD:ID"
                         if (len >= 4 && strncmp(buff, "CMD:", 4) == 0) {
                             int actionId = atoi(&buff[4]);
                             Serial.printf("收到动作指令 ID: %d\n", actionId);
@@ -233,6 +270,18 @@ public:
                                 Serial.printf("📝 收到备忘录: %s\n", memoBuf);
                                 if (_onMemoReceived) {
                                     _onMemoReceived(memoBuf);
+                                }
+                            }
+                            recordStartTime = millis();
+                        }
+                        // ▼▼▼ 新增：情感数据包 "EMO:mood,intimacy" ▼▼▼
+                        else if (len >= 4 && strncmp(buff, "EMO:", 4) == 0) {
+                            buff[len] = '\0';
+                            int mood = 50, intimacy = 20;
+                            if (sscanf(&buff[4], "%d,%d", &mood, &intimacy) == 2) {
+                                Serial.printf("💖 收到情感数据: mood=%d, intimacy=%d\n", mood, intimacy);
+                                if (_onEmotionReceived) {
+                                    _onEmotionReceived(mood, intimacy);
                                 }
                             }
                             recordStartTime = millis();
